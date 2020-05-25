@@ -1,0 +1,141 @@
+clear all; close all; clc;
+%{
+This MATLAB code is used for learning LQR controller for inverted pendulum
+Author: Zhaoyuan Huo
+Email: zhuo2@andrew.cmu.edu
+%}
+%% Define the system
+M = 0.5;
+m = 0.2;
+b = 0.1;
+I = 0.006;
+g = 9.8;
+l = 0.3;
+
+p = I*(M+m) + M*m*l^2;
+A = [0      1              0           0;
+     0 -(I+m*l^2)*b/p  (m^2*g*l^2)/p   0;
+     0      0              0           1;
+     0 -(m*l*b)/p       m*g*l*(M+m)/p  0];
+B = [     0;
+     (I+m*l^2)/p;
+          0;
+        m*l/p];
+C = [1 0 0 0;
+     0 0 1 0];
+D = [0;
+     0];
+ 
+states = {'x' 'x_dot' 'phi' 'phi_dot'};
+inputs = {'u'};
+outputs = {'x'; 'phi'};
+
+sys_ss = ss(A,B,C,D,'statename', states, 'inputname', inputs, 'outputname', outputs);
+poles = eig(A) % A has eigen values on the right half plane, which means the open loop system is unstable
+
+%% Linear Quadratic Regulator (LQR)
+
+% first make sure the system is controllable
+% C = [B AB A^2B ... A^(n-1)B]
+co = ctrb(sys_ss);
+controllability = rank(co) % verified fullrank,  thus we should be able to design a controller
+
+% define cost matrices Q and R
+% simplest case let Q = C'*C, R = 1
+Q = C'* C;
+R = 1;
+% tune params
+Q(1,1) = 5000; % more penalty on desired x position
+Q(3,3) = 100; % more penalty on error in angle phi
+
+
+K = lqr(A,B,Q,R)
+
+% closed loop system
+Ac = [(A-B*K)];
+Bc = [B];
+Cc = [C];
+Dc = [D];
+
+states = {'x' 'x_dot' 'phi' 'phi_dot'};
+inputs = {'r'};
+outputs = {'x'; 'phi'};
+
+sys_cl = ss(Ac,Bc,Cc,Dc,'statename',states,'inputname',inputs,'outputname',outputs);
+
+t = 0:0.01:5;
+r = 0.2*ones(size(t)); % step response
+[y,t,x] = lsim(sys_cl, r, t);
+
+% inspect output position and angle
+figure(1); 
+[AX,H1,H2] = plotyy(t,y(:,1),t,y(:,2),'plot'); % plot y. AX is the two axes, H1/H2 is lane object
+set(get(AX(1),'Ylabel'),'String','cart position(m)')
+set(get(AX(2),'Ylabel'),'String','pendulum angle (radians)')
+title('Step Reponse with LQR Control - outputs');
+
+% inspect on four states
+figure(2);
+[AX,H1,H2] = plotyy(t,x(:,2),t,x(:,4), 'plot');
+set(get(AX(1), 'Ylabel'), 'String', 'cart speed(m/s)')
+set(get(AX(2), 'Ylabel'), 'String', 'pendulum rotation speed (radians/s)')
+title('Step response with LQR Control - remaining states');
+
+%% Reference tracking with precompensator
+Cn = [1 0 0 0];
+sys_ss = ss(A,B,Cn,0); % reference is a command only on cart position
+Nbar = rscale(sys_ss, K) % precompensator calculation with rscale
+
+sys_cl = ss(Ac, Bc*Nbar, Cc, Dc, 'statename', states, 'inputname', inputs, 'outputname', outputs);
+
+t = 0:0.01:5;
+r = 0.2*ones(size(t));
+figure(3);
+[y,t,x] = lsim(sys_cl, r, t);
+[AX, H1, H2] = plotyy(t, y(:,1), t, y(:,2), 'plot');
+set(get(AX(1),'Ylabel'),'String','cart position (m)')
+set(get(AX(2),'Ylabel'),'String','pendulum angle (radians)')
+title('Step Response with Precompensation and LQR Control')
+
+%% Observer-based control
+ob = obsv(sys_ss); % 8x4
+observability = rank(ob) % full rank
+% the state estimate to converge faster than the closed-loop system
+% observer poles to be faster than the controller poles
+% estimator poles 4-10 times faster than the slowest controller pole
+% too fast estimator poles is also problematic:
+% The measurement is corrupted by noise
+% or there are errors in the sensor measurement in general
+eig(Ac) % inspect closed-loop poles, slowest at -4.7592 => -40 as estimator poles
+P = [-40 -41 -42 -43];
+L = place(A', C', P) % observer gain
+% include error dynamics
+Ace = [(A-B*K) (B*K);
+       zero(size(A)) (A-L*C)];
+Bce = [B*Nbar; zeros(size(B))];
+C = [Cc zeros(size(Cc))];
+Dce = [0; 0];
+states = {'x' 'x_dot' 'phi' 'phi_dot' 'e1' 'e2' 'e3' 'e4'};
+inputs = {'r'};
+outputs = {'x'; 'phi'};
+sys_est_cl = ss(Ace, Bce, Cce, Dce, state)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
